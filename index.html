@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>简易MOBA</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #111; font-family: 'Segoe UI', Arial, sans-serif; }
+#gameCanvas { display: block; width: 100%; height: 100%; cursor: default; }
+#ui-overlay {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+#ui-overlay > * { pointer-events: auto; }
+
+/* HUD bottom bar */
+#hud {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 100px; background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+  display: flex; align-items: center; padding: 10px 20px;
+}
+#hero-portrait {
+  width: 70px; height: 70px; border-radius: 8px;
+  background: linear-gradient(135deg, #4a7dff, #1a3a8a);
+  border: 2px solid #6af; display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: bold; font-size: 28px; margin-right: 12px;
+}
+#hero-stats { color: white; min-width: 120px; }
+#hero-stats .level { font-size: 14px; color: #adf; }
+#hero-stats .name { font-size: 16px; font-weight: bold; }
+#health-bar-wrap {
+  width: 150px; height: 14px; background: #333; border-radius: 7px;
+  margin: 4px 0; overflow: hidden; position: relative;
+}
+#health-bar { height: 100%; background: linear-gradient(90deg, #e44, #4a4); border-radius: 7px; transition: width 0.15s; width: 100%; }
+#health-text { position: absolute; left: 0; right: 0; top: 0; text-align: center; font-size: 11px; line-height: 14px; color: white; text-shadow: 0 0 3px #000; }
+#mana-bar-wrap {
+  width: 150px; height: 8px; background: #333; border-radius: 4px;
+  overflow: hidden; position: relative;
+}
+#mana-bar { height: 100%; background: linear-gradient(90deg, #46f, #8af); border-radius: 4px; transition: width 0.15s; width: 100%; }
+
+/* Ability bar */
+#abilities {
+  display: flex; gap: 8px; margin-left: 25px;
+}
+.ability {
+  width: 58px; height: 58px; border-radius: 8px;
+  border: 2px solid rgba(255,255,255,0.2);
+  background: rgba(0,0,0,0.6);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: white; font-size: 20px; font-weight: bold;
+  position: relative; cursor: pointer;
+}
+.ability .key { font-size: 10px; color: #aaa; margin-top: -4px; }
+.ability .cd-overlay {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  border-radius: 6px; background: rgba(0,0,0,0.7);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; color: #fff;
+}
+.ability.on-cd { border-color: rgba(255,100,100,0.4); }
+.ability.no-mana { border-color: rgba(100,100,255,0.4); }
+
+/* Scoreboard top */
+#scoreboard {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.7); border-radius: 10px; padding: 6px 20px;
+  display: flex; align-items: center; gap: 16px;
+  color: white; font-size: 14px; border: 1px solid rgba(255,255,255,0.1);
+}
+#scoreboard .blue { color: #6af; }
+#scoreboard .red { color: #f66; }
+#scoreboard .vs { color: #555; font-size: 12px; }
+
+/* Game over */
+#game-over {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.75); flex-direction: column;
+}
+#game-over.show { display: flex; }
+#game-over h1 { font-size: 48px; margin-bottom: 10px; }
+#game-over p { color: #ccc; font-size: 20px; margin-bottom: 20px; }
+#game-over button {
+  padding: 12px 40px; font-size: 18px; border: none; border-radius: 8px;
+  background: #4a7dff; color: white; cursor: pointer;
+}
+#game-over button:hover { background: #5a8dff; }
+.win h1 { color: #4c4; }
+.lose h1 { color: #f44; }
+
+/* Instructions overlay */
+#instructions {
+  position: absolute; top: 10px; right: 10px;
+  background: rgba(0,0,0,0.7); border-radius: 8px; padding: 10px 14px;
+  color: #ccc; font-size: 12px; line-height: 1.6; border: 1px solid rgba(255,255,255,0.1);
+}
+#instructions kbd {
+  background: rgba(255,255,255,0.15); padding: 1px 6px; border-radius: 3px; color: white; font-size: 11px;
+}
+
+/* Minimap */
+#minimap {
+  position: absolute; bottom: 110px; right: 10px;
+  width: 180px; height: 120px; border-radius: 6px;
+  border: 2px solid rgba(255,255,255,0.3); overflow: hidden;
+  background: rgba(0,20,0,0.8);
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="ui-overlay">
+  <div id="scoreboard">
+    <span class="blue" id="blue-kills">0</span>
+    <span class="blue" id="blue-towers">0</span>
+    <span class="vs">vs</span>
+    <span class="red" id="red-kills">0</span>
+    <span class="red" id="red-towers">0</span>
+  </div>
+  <div id="instructions">
+    <kbd>W A S D</kbd> 移动 &nbsp;|&nbsp; <kbd>Q</kbd> 火球 <kbd>W</kbd> 治疗 <kbd>E</kbd> 闪电链<br>
+    自动攻击范围内敌人
+  </div>
+  <canvas id="minimap" width="180" height="120"></canvas>
+  <div id="hud">
+    <div id="hero-portrait">⚔</div>
+    <div id="hero-stats">
+      <div class="name">战场游侠</div>
+      <div class="level" id="level-display">等级 1</div>
+      <div id="health-bar-wrap">
+        <div id="health-bar" style="width:100%"></div>
+        <div id="health-text"></div>
+      </div>
+      <div id="mana-bar-wrap">
+        <div id="mana-bar" style="width:100%"></div>
+      </div>
+    </div>
+    <div id="abilities">
+      <div class="ability" id="abQ"><span>🔥</span><span class="key">Q</span></div>
+      <div class="ability" id="abW"><span>💚</span><span class="key">W</span></div>
+      <div class="ability" id="abE"><span>⚡</span><span class="key">E</span></div>
+    </div>
+  </div>
+  <div id="game-over">
+    <h1 id="result-title"></h1>
+    <p id="result-detail"></p>
+    <button onclick="location.reload()">再来一局</button>
+  </div>
+</div>
+<script>
+// ===== GAME CONSTANTS =====
+const GOLD_PER_MINION = 20;
+const GOLD_PER_KILL = 200;
+const XP_PER_MINION = 40;
+const XP_PER_KILL = 200;
+const XP_PER_LEVEL = 300;
+
+// ===== CANVAS SETUP =====
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const miniCanvas = document.getElementById('minimap');
+const miniCtx = miniCanvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// World dimensions (virtual game units)
+const W = 1600, H = 900;
+const LANE_Y = H / 2;
+
+function scaleX(v) { return v / W * canvas.width; }
+function scaleY(v) { return v / H * canvas.height; }
+function scaleR(r) { return r / W * canvas.width; }
+
+function drawCircle(x, y, r, color, stroke) {
+  ctx.beginPath();
+  ctx.arc(scaleX(x), scaleY(y), scaleR(r), 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke(); }
+}
+
+function drawText(x, y, text, color, size) {
+  ctx.font = `${size || 14}px 'Segoe UI', Arial, sans-serif`;
+  ctx.fillStyle = color || 'white';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, scaleX(x), scaleY(y));
+}
+
+// ===== GAME STATE =====
+let gameTime = 0;
+let gameOver = false;
+let entities = [];
+let projectiles = [];
+let particles = [];
+let keys = {};
+
+const player = {
+  x: 120, y: LANE_Y,
+  team: 'blue',
+  radius: 18,
+  hp: 600, maxHp: 600,
+  mana: 400, maxMana: 400,
+  level: 1, exp: 0,
+  kills: 0, deaths: 0, gold: 0,
+  attackDamage: 50,
+  abilityPower: 30,
+  attackSpeed: 1.0, // attacks per second
+  attackRange: 130,
+  moveSpeed: 2.8,
+  attackCooldown: 0,
+  alive: true,
+  respawnTimer: 0,
+  facingX: 1, facingY: 0,
+  // Abilities
+  qCooldown: 0, wCooldown: 0, eCooldown: 0,
+};
+
+const Q_COOLDOWN = 150, W_COOLDOWN = 200, E_COOLDOWN = 250; // frames
+const Q_MANA = 50, W_MANA = 60, E_MANA = 80;
+const Q_DAMAGE = 100, W_HEAL = 120, E_DAMAGE = 80;
+
+const enemy = {
+  x: 1480, y: LANE_Y,
+  team: 'red',
+  radius: 18,
+  hp: 600, maxHp: 600,
+  mana: 400, maxMana: 400,
+  level: 1, exp: 0,
+  kills: 0, deaths: 0, gold: 0,
+  attackDamage: 50,
+  abilityPower: 30,
+  attackSpeed: 1.0,
+  attackRange: 130,
+  moveSpeed: 2.6,
+  attackCooldown: 0,
+  alive: true,
+  respawnTimer: 0,
+  facingX: -1, facingY: 0,
+  qCooldown: 0, wCooldown: 0, eCooldown: 0,
+  aiTimer: 0, aiTargetX: LANE_Y, aiTargetY: LANE_Y,
+};
+
+const towers = [];
+const nexuses = [];
+let minions = [];
+let waveTimer = 0;
+
+// ===== TOWERS & NEXUS =====
+function initBuildings() {
+  towers.length = 0;
+  nexuses.length = 0;
+
+  // Blue towers
+  towers.push({ x: 350, y: LANE_Y - 30, team: 'blue', hp: 1500, maxHp: 1500, radius: 30, attackRange: 250, attackDamage: 65, attackCooldown: 0, alive: true, target: null });
+  towers.push({ x: 350, y: LANE_Y + 30, team: 'blue', hp: 1500, maxHp: 1500, radius: 30, attackRange: 250, attackDamage: 65, attackCooldown: 0, alive: true, target: null });
+  towers.push({ x: 600, y: LANE_Y, team: 'blue', hp: 1500, maxHp: 1500, radius: 30, attackRange: 280, attackDamage: 75, attackCooldown: 0, alive: true, target: null });
+
+  // Red towers
+  towers.push({ x: 1250, y: LANE_Y - 30, team: 'red', hp: 1500, maxHp: 1500, radius: 30, attackRange: 250, attackDamage: 65, attackCooldown: 0, alive: true, target: null });
+  towers.push({ x: 1250, y: LANE_Y + 30, team: 'red', hp: 1500, maxHp: 1500, radius: 30, attackRange: 250, attackDamage: 65, attackCooldown: 0, alive: true, target: null });
+  towers.push({ x: 1000, y: LANE_Y, team: 'red', hp: 1500, maxHp: 1500, radius: 30, attackRange: 280, attackDamage: 75, attackCooldown: 0, alive: true, target: null });
+
+  // Nexuses
+  nexuses.push({ x: 60, y: LANE_Y, team: 'blue', hp: 3000, maxHp: 3000, radius: 45, alive: true, name: '蓝色方水晶' });
+  nexuses.push({ x: 1540, y: LANE_Y, team: 'red', hp: 3000, maxHp: 3000, radius: 45, alive: true, name: '红色方水晶' });
+}
+
+// ===== MINIONS =====
+function spawnWave(team) {
+  const baseX = team === 'blue' ? 40 : 1560;
+  const dir = team === 'blue' ? 1 : -1;
+  const offsets = [-50, -25, 0, 25, 50];
+  const types = ['melee', 'melee', 'melee', 'ranged', 'ranged'];
+  for (let i = 0; i < 5; i++) {
+    const m = {
+      x: baseX, y: LANE_Y + offsets[i],
+      team, radius: 12, alive: true,
+      hp: types[i] === 'melee' ? 300 : 200,
+      maxHp: types[i] === 'melee' ? 300 : 200,
+      attackDamage: types[i] === 'melee' ? 18 : 22,
+      attackRange: types[i] === 'melee' ? 40 : 180,
+      moveSpeed: 1.2 + Math.random() * 0.2,
+      attackCooldown: 0,
+      attackSpeed: 0.7,
+      type: types[i],
+      dir,
+    };
+    minions.push(m);
+  }
+}
+
+// ===== PROJECTILES =====
+function fireProjectile(src, tx, ty, speed, damage, color, isAbility) {
+  const dx = tx - src.x, dy = ty - src.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist === 0) return;
+  projectiles.push({
+    x: src.x, y: src.y,
+    vx: dx/dist * speed, vy: dy/dist * speed,
+    damage, radius: isAbility ? 8 : 5,
+    team: src.team, color, alive: true,
+    maxDist: dist + 10, distTraveled: 0,
+    pierce: !!isAbility,
+  });
+}
+
+// ===== PARTICLES (visual feedback) =====
+function addParticles(x, y, color, count) {
+  for (let i = 0; i < (count || 8); i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 3;
+    particles.push({
+      x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed,
+      life: 30 + Math.random() * 20, maxLife: 50,
+      radius: 2 + Math.random() * 3, color,
+    });
+  }
+}
+
+// ===== DAMAGE NUMBERS =====
+let dmgNumbers = [];
+function addDmgNumber(x, y, text, color) {
+  dmgNumbers.push({ x, y, text, color, life: 60, vy: -1.5 });
+}
+
+// ===== HELPERS =====
+function dist(a, b) { return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2); }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function getEnemyTeam(team) { return team === 'blue' ? 'red' : 'blue'; }
+
+function getNearestEnemyInRange(from, range, excludeTowers) {
+  let best = null, bestDist = Infinity;
+  // Check enemy hero
+  if (enemy.alive && from.team !== enemy.team) {
+    const d = dist(from, enemy);
+    if (d <= range && d < bestDist) { best = enemy; bestDist = d; }
+  }
+  // Check minions
+  for (const m of minions) {
+    if (!m.alive || m.team === from.team) continue;
+    const d = dist(from, m);
+    if (d <= range && d < bestDist) { best = m; bestDist = d; }
+  }
+  // Check towers (for player only, towers target minions first in their logic)
+  if (!excludeTowers) {
+    for (const t of towers) {
+      if (!t.alive || t.team === from.team) continue;
+      const d = dist(from, t);
+      if (d <= range && d < bestDist) { best = t; bestDist = d; }
+    }
+    // Check nexuses
+    for (const n of nexuses) {
+      if (n.team === from.team) continue;
+      const d = dist(from, n);
+      if (d <= range && d < bestDist) { best = n; bestDist = d; }
+    }
+  }
+  return best;
+}
+
+function getEnemiesInRange(from, range) {
+  const results = [];
+  if (enemy.alive && from.team !== enemy.team && dist(from, enemy) <= range) results.push(enemy);
+  for (const m of minions) {
+    if (m.alive && m.team !== from.team && dist(from, m) <= range) results.push(m);
+  }
+  for (const t of towers) {
+    if (t.alive && t.team !== from.team && dist(from, t) <= range) results.push(t);
+  }
+  return results;
+}
+
+function getAlliesInRange(from, range) {
+  const results = [];
+  if (from.team === 'blue' && player.alive && dist(from, player) <= range) results.push(player);
+  if (from.team === 'red' && enemy.alive && dist(from, enemy) <= range) results.push(enemy);
+  for (const m of minions) {
+    if (m.alive && m.team === from.team && dist(from, m) <= range) results.push(m);
+  }
+  return results;
+}
+
+function dealDamage(target, damage, attacker) {
+  if (!target.alive) return;
+  target.hp -= damage;
+  addDmgNumber(target.x, target.y - target.radius - 10, Math.round(damage), '#ff4');
+  addParticles(target.x, target.y, '#ff4', 5);
+  if (target.hp <= 0) {
+    target.hp = 0;
+    target.alive = false;
+    addParticles(target.x, target.y, '#f44', 20);
+    if (attacker) {
+      onKill(attacker, target);
+    }
+  }
+}
+
+function onKill(killer, target) {
+  if (target === player || target === enemy) {
+    // Hero kill
+    killer.kills++;
+    if (killer.team === 'blue') killer.gold += GOLD_PER_KILL;
+    const xp = XP_PER_KILL;
+    addExp(killer, xp);
+    // Respawn
+    target.deaths++;
+    target.respawnTimer = 240; // 4 seconds at 60fps
+    target.alive = false;
+    if (target === player) {
+      document.getElementById('game-over').classList.add('lose');
+    }
+  } else if (target.team) {
+    // Minion kill
+    if (killer.team === 'blue') killer.gold += GOLD_PER_MINION;
+    addExp(killer, XP_PER_MINION);
+  }
+}
+
+function addExp(hero, amt) {
+  hero.exp += amt;
+  const needed = XP_PER_LEVEL * hero.level;
+  if (hero.exp >= needed) {
+    hero.exp -= needed;
+    hero.level++;
+    hero.maxHp += 80;
+    hero.hp = Math.min(hero.hp + 80, hero.maxHp);
+    hero.maxMana += 50;
+    hero.mana = Math.min(hero.mana + 50, hero.maxMana);
+    hero.attackDamage += 8;
+    hero.abilityPower += 6;
+    addParticles(hero.x, hero.y, '#ff0', 30);
+    addDmgNumber(hero.x, hero.y - 30, '升级!', '#ff0');
+  }
+}
+
+// ===== TOWER LOGIC =====
+function updateTower(t) {
+  if (!t.alive) return;
+  if (t.attackCooldown > 0) t.attackCooldown--;
+
+  // Find target - prioritize minions
+  let best = null, bestVal = 9999;
+  const checkList = t.team === 'blue' ? [enemy, ...minions] : [player, ...minions];
+  for (const e of checkList) {
+    if (!e.alive || e.team === t.team) continue;
+    const d = dist(t, e);
+    if (d < t.attackRange) {
+      // Prioritize minions, then heroes
+      const priority = (e === player || e === enemy) ? 1 : 0;
+      const val = priority * 10000 + d;
+      if (val < bestVal) { bestVal = val; best = e; }
+    }
+  }
+  t.target = best;
+  if (best && t.attackCooldown <= 0) {
+    t.attackCooldown = 50; // ~0.83s
+    fireProjectile(t, best.x, best.y, 6, t.attackDamage, '#f80', false);
+  }
+}
+
+// ===== HERO ACTIONS =====
+function heroBasicAttack(hero, target) {
+  if (!target || !target.alive) return;
+  const d = dist(hero, target);
+  if (d > hero.attackRange + target.radius) return;
+  if (hero.attackCooldown > 0) return;
+  hero.attackCooldown = Math.round(60 / hero.attackSpeed);
+  dealDamage(target, hero.attackDamage, hero);
+  fireProjectile(hero, target.x, target.y, 8, 0, hero.team === 'blue' ? '#6af' : '#f66', false);
+}
+
+function heroCastQ(hero) {
+  if (hero === player && (hero.qCooldown > 0 || hero.mana < Q_MANA)) return false;
+  if (hero === enemy && (hero.qCooldown > 0 || hero.mana < Q_MANA)) return false;
+  hero.mana -= Q_MANA;
+  hero.qCooldown = Q_COOLDOWN;
+  const speed = 7;
+  const px = hero.x + hero.facingX * 25;
+  const py = hero.y + hero.facingY * 25;
+  projectiles.push({
+    x: px, y: py,
+    vx: hero.facingX * speed, vy: hero.facingY * speed,
+    damage: Q_DAMAGE + hero.abilityPower * 0.4,
+    radius: 8, team: hero.team, color: '#f60', alive: true,
+    maxDist: 500, distTraveled: 0, pierce: false,
+    isAbility: true,
+  });
+  return true;
+}
+
+function heroCastW(hero) {
+  if (hero === player && (hero.wCooldown > 0 || hero.mana < W_MANA)) return false;
+  if (hero === enemy && (hero.wCooldown > 0 || hero.mana < W_MANA)) return false;
+  hero.mana -= W_MANA;
+  hero.wCooldown = W_COOLDOWN;
+  // Heal
+  const healAmt = W_HEAL + hero.abilityPower * 0.5;
+  hero.hp = Math.min(hero.hp + healAmt, hero.maxHp);
+  addParticles(hero.x, hero.y, '#4f4', 15);
+  addDmgNumber(hero.x, hero.y - 20, `+${Math.round(healAmt)}`, '#4f4');
+  return true;
+}
+
+function heroCastE(hero) {
+  if (hero === player && (hero.eCooldown > 0 || hero.mana < E_MANA)) return false;
+  if (hero === enemy && (hero.eCooldown > 0 || hero.mana < E_MANA)) return false;
+  hero.mana -= E_MANA;
+  hero.eCooldown = E_COOLDOWN;
+  // Chain lightning - damage all nearby enemies
+  const targets = getEnemiesInRange(hero, 200);
+  for (const t of targets) {
+    dealDamage(t, E_DAMAGE + hero.abilityPower * 0.5, hero);
+  }
+  addParticles(hero.x, hero.y, '#ff0', 20);
+  if (targets.length > 0) {
+    addDmgNumber(hero.x, hero.y - hero.radius - 15, '闪电链!', '#ff0');
+  }
+  return true;
+}
+
+// ===== UPDATE =====
+function updatePlayer() {
+  if (!player.alive) {
+    player.respawnTimer--;
+    if (player.respawnTimer <= 0) {
+      player.alive = true;
+      player.hp = player.maxHp;
+      player.mana = player.maxMana;
+      player.x = 120;
+      player.y = LANE_Y;
+      document.getElementById('game-over').classList.remove('lose');
+    }
+    return;
+  }
+
+  // Movement
+  let mx = 0, my = 0;
+  if (keys['w'] || keys['arrowup']) my = -1;
+  if (keys['s'] || keys['arrowdown']) my = 1;
+  if (keys['a'] || keys['arrowleft']) mx = -1;
+  if (keys['d'] || keys['arrowright']) mx = 1;
+  if (mx !== 0 || my !== 0) {
+    const len = Math.sqrt(mx*mx + my*my);
+    mx /= len; my /= len;
+    player.x += mx * player.moveSpeed;
+    player.y += my * player.moveSpeed;
+    player.facingX = mx;
+    player.facingY = my;
+  }
+  player.x = clamp(player.x, 30, W-30);
+  player.y = clamp(player.y, 30, H-30);
+
+  // Cooldowns
+  if (player.attackCooldown > 0) player.attackCooldown--;
+  if (player.qCooldown > 0) player.qCooldown--;
+  if (player.wCooldown > 0) player.wCooldown--;
+  if (player.eCooldown > 0) player.eCooldown--;
+
+  // Mana regen
+  player.mana = Math.min(player.mana + 0.05, player.maxMana);
+
+  // Auto-attack
+  const target = getNearestEnemyInRange(player, player.attackRange);
+  heroBasicAttack(player, target);
+}
+
+function updateEnemy() {
+  if (!enemy.alive) {
+    enemy.respawnTimer--;
+    if (enemy.respawnTimer <= 0) {
+      enemy.alive = true;
+      enemy.hp = enemy.maxHp;
+      enemy.mana = enemy.maxMana;
+      enemy.x = 1480;
+      enemy.y = LANE_Y;
+    }
+    return;
+  }
+
+  if (enemy.aiTimer > 0) enemy.aiTimer--;
+
+  // Cooldowns
+  if (enemy.attackCooldown > 0) enemy.attackCooldown--;
+  if (enemy.qCooldown > 0) enemy.qCooldown--;
+  if (enemy.wCooldown > 0) enemy.wCooldown--;
+  if (enemy.eCooldown > 0) enemy.eCooldown--;
+  enemy.mana = Math.min(enemy.mana + 0.05, enemy.maxMana);
+
+  // Target selection
+  const nearestTarget = getNearestEnemyInRange(enemy, 500, true);
+  const attackTarget = getNearestEnemyInRange(enemy, enemy.attackRange);
+
+  // Use abilities
+  if (enemy.eCooldown === 0 && enemy.mana >= E_MANA) {
+    const nearby = getEnemiesInRange(enemy, 200);
+    if (nearby.length > 0) heroCastE(enemy);
+  }
+  if (enemy.qCooldown === 0 && enemy.mana >= Q_MANA && nearestTarget) {
+    const d = dist(enemy, nearestTarget);
+    if (d < 400) {
+      enemy.facingX = (nearestTarget.x - enemy.x) / d;
+      enemy.facingY = (nearestTarget.y - enemy.y) / d;
+      heroCastQ(enemy);
+    }
+  }
+  if (enemy.wCooldown === 0 && enemy.mana >= W_MANA && enemy.hp < enemy.maxHp * 0.6) {
+    heroCastW(enemy);
+  }
+
+  // Movement AI
+  if (enemy.aiTimer <= 0) {
+    enemy.aiTimer = 60 + Math.random() * 30;
+    if (nearestTarget) {
+      if (dist(enemy, nearestTarget) < 200) {
+        // Kite backward
+        enemy.aiTargetX = enemy.x - enemy.facingX * 100;
+        enemy.aiTargetY = enemy.y + (Math.random() - 0.5) * 60;
+      } else {
+        enemy.aiTargetX = nearestTarget.x;
+        enemy.aiTargetY = nearestTarget.y;
+      }
+    } else {
+      // March down lane
+      enemy.aiTargetX = enemy.x - 40;
+      enemy.aiTargetY = LANE_Y + (Math.random() - 0.5) * 40;
+    }
+  }
+
+  // Move toward target
+  const dx = enemy.aiTargetX - enemy.x;
+  const dy = enemy.aiTargetY - enemy.y;
+  const d = Math.sqrt(dx*dx + dy*dy);
+  if (d > 5) {
+    enemy.x += (dx/d) * enemy.moveSpeed;
+    enemy.y += (dy/d) * enemy.moveSpeed;
+    enemy.facingX = dx/d;
+    enemy.facingY = dy/d;
+  }
+
+  // Auto-attack
+  heroBasicAttack(enemy, attackTarget);
+
+  // Retreat when low HP
+  if (enemy.hp < enemy.maxHp * 0.2 && !attackTarget) {
+    enemy.aiTargetX = enemy.x + 100;
+  }
+}
+
+function updateProjectiles() {
+  for (const p of projectiles) {
+    if (!p.alive) continue;
+    p.x += p.vx;
+    p.y += p.vy;
+    p.distTraveled += Math.abs(p.vx) + Math.abs(p.vy);
+    if (p.distTraveled > p.maxDist) { p.alive = false; continue; }
+    if (p.x < -50 || p.x > W + 50 || p.y < -50 || p.y > H + 50) { p.alive = false; continue; }
+
+    if (p.damage > 0) {
+      // Check collision with enemies
+      if (p.team !== 'blue') {
+        if (player.alive && dist(p, player) < player.radius + p.radius) {
+          dealDamage(player, p.damage, null);
+          if (!p.pierce) p.alive = false;
+        }
+      }
+      if (p.team !== 'red') {
+        if (enemy.alive && dist(p, enemy) < enemy.radius + p.radius) {
+          dealDamage(enemy, p.damage, null);
+          if (!p.pierce) p.alive = false;
+        }
+      }
+      // Check minions
+      for (const m of minions) {
+        if (!m.alive || m.team === p.team) continue;
+        if (dist(p, m) < m.radius + p.radius) {
+          dealDamage(m, p.damage, null);
+          if (!p.pierce) { p.alive = false; break; }
+        }
+      }
+    }
+  }
+  projectiles = projectiles.filter(p => p.alive);
+}
+
+function updateMinions() {
+  for (const m of minions) {
+    if (!m.alive) continue;
+    if (m.attackCooldown > 0) m.attackCooldown--;
+
+    // Find nearest enemy
+    const enemies = getEnemiesInRange(m, m.attackRange);
+    if (enemies.length > 0) {
+      // Attack
+      if (m.attackCooldown <= 0) {
+        m.attackCooldown = Math.round(60 / m.attackSpeed);
+        // Target nearest
+        enemies.sort((a, b) => dist(m, a) - dist(m, b));
+        dealDamage(enemies[0], m.attackDamage, m);
+      }
+    } else {
+      // Move along lane
+      m.x += m.dir * m.moveSpeed;
+    }
+    // Don't stray too far from lane
+    m.y += (LANE_Y - m.y) * 0.01;
+  }
+  minions = minions.filter(m => m.alive || m.hp > 0);
+}
+
+function updateParticles() {
+  for (const p of particles) {
+    p.x += p.vx * 0.3;
+    p.y += p.vy * 0.3;
+    p.life--;
+    p.radius *= 0.97;
+  }
+  particles = particles.filter(p => p.life > 0);
+  // Dmg numbers
+  for (const d of dmgNumbers) {
+    d.y += d.vy;
+    d.life--;
+  }
+  dmgNumbers = dmgNumbers.filter(d => d.life > 0);
+}
+
+function checkGameOver() {
+  for (const n of nexuses) {
+    if (!n.alive) {
+      gameOver = true;
+      const el = document.getElementById('game-over');
+      el.classList.add('show');
+      if (n.team === 'red') {
+        el.classList.add('win');
+        document.getElementById('result-title').textContent = '胜利!';
+        document.getElementById('result-detail').textContent = '你摧毁了敌方水晶!';
+      } else {
+        el.classList.add('lose');
+        document.getElementById('result-title').textContent = '失败';
+        document.getElementById('result-detail').textContent = '我方水晶被摧毁';
+      }
+      return;
+    }
+  }
+}
+
+function addExpToNearby(killer, xpRadius, killed) {
+  if (player.alive && dist(killed, player) < xpRadius) addExp(player, XP_PER_MINION * 0.5);
+  if (enemy.alive && dist(killed, enemy) < xpRadius) addExp(enemy, XP_PER_MINION * 0.5);
+}
+
+// ===== MAIN GAME LOOP =====
+function update() {
+  if (gameOver) return;
+  gameTime++;
+  updatePlayer();
+  updateEnemy();
+  for (const t of towers) updateTower(t);
+  updateMinions();
+
+  // Wave spawner
+  waveTimer++;
+  if (waveTimer >= 600) { // every 10 seconds
+    waveTimer = 0;
+    spawnWave('blue');
+    spawnWave('red');
+  }
+
+  updateProjectiles();
+  updateParticles();
+  checkGameOver();
+}
+
+// ===== RENDER =====
+function drawMap() {
+  // Background - grass
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, '#1a3a1a');
+  grad.addColorStop(0.5, '#2a4a2a');
+  grad.addColorStop(1, '#1a3a1a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Lane
+  ctx.fillStyle = '#4a3a2a';
+  ctx.fillRect(0, scaleY(LANE_Y - 30), canvas.width, scaleY(60));
+
+  // Lane center line
+  ctx.strokeStyle = 'rgba(255,255,200,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([10, 15]);
+  ctx.beginPath();
+  ctx.moveTo(0, scaleY(LANE_Y));
+  ctx.lineTo(canvas.width, scaleY(LANE_Y));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Lane markings (tile pattern)
+  ctx.strokeStyle = 'rgba(255,255,200,0.08)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(scaleX(x), scaleY(LANE_Y - 30));
+    ctx.lineTo(scaleX(x), scaleY(LANE_Y + 30));
+    ctx.stroke();
+  }
+
+  // River
+  ctx.fillStyle = '#2a5a7a';
+  ctx.fillRect(scaleX(780) - 2, 0, scaleX(40), canvas.height);
+  ctx.fillStyle = 'rgba(60, 150, 200, 0.2)';
+  ctx.fillRect(scaleX(780), 0, scaleX(40), canvas.height);
+
+  // River label
+  drawText(800, 30, '— 河道 —', 'rgba(200,230,255,0.3)', 14);
+
+  // Base areas
+  for (const team of ['blue', 'red']) {
+    const isBlue = team === 'blue';
+    const bx = isBlue ? 0 : scaleX(W - 100);
+    const bw = scaleX(100);
+    ctx.fillStyle = isBlue ? 'rgba(50,100,255,0.1)' : 'rgba(255,50,50,0.1)';
+    ctx.fillRect(bx, 0, bw, canvas.height);
+  }
+
+  // Fog of war (sides)
+  const fogGrad = ctx.createLinearGradient(0, 0, scaleX(200), 0);
+  fogGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  fogGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = fogGrad;
+}
+
+function drawEntity(e, color, fillColor) {
+  if (!e.alive) return;
+  const sx = scaleX(e.x), sy = scaleY(e.y), sr = scaleR(e.radius);
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(sx + 2, sy + 3, sr, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fill();
+
+  // Body
+  const grad = ctx.createRadialGradient(sx - sr*0.3, sy - sr*0.3, 0, sx, sy, sr);
+  grad.addColorStop(0, fillColor || color);
+  grad.addColorStop(1, color);
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawHealthBar(x, y, w, h, hp, maxHp, color) {
+  const sx = scaleX(x), sy = scaleY(y), sw = scaleR(w), sh = scaleR(h);
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(sx - sw/2, sy - sh, sw, sh);
+  const pct = Math.max(0, hp / maxHp);
+  const grad = ctx.createLinearGradient(sx - sw/2, 0, sx + sw/2, 0);
+  if (pct > 0.5) {
+    grad.addColorStop(0, '#4a4');
+    grad.addColorStop(1, '#4c4');
+  } else if (pct > 0.25) {
+    grad.addColorStop(0, '#cc4');
+    grad.addColorStop(1, '#ca4');
+  } else {
+    grad.addColorStop(0, '#c44');
+    grad.addColorStop(1, '#e44');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(sx - sw/2, sy - sh, sw * pct, sh);
+  if (color) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx - sw/2, sy - sh, sw, sh);
+  }
+}
+
+function drawHero(hero) {
+  if (!hero.alive) return;
+  const isBlue = hero.team === 'blue';
+  const color = isBlue ? '#2a5aff' : '#ff3a2a';
+  const light = isBlue ? '#6a9fff' : '#ff6a5a';
+  drawEntity(hero, color, light);
+
+  // Facing direction indicator
+  const sx = scaleX(hero.x), sy = scaleY(hero.y);
+  const sr = scaleR(hero.radius);
+  const fx = hero.facingX, fy = hero.facingY;
+  ctx.strokeStyle = isBlue ? '#8af' : '#f88';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(sx + fx * sr, sy + fy * sr);
+  ctx.lineTo(sx + fx * (sr + 10), sy + fy * (sr + 10));
+  ctx.stroke();
+
+  // Health bar above
+  const hbW = 50, hbH = 5;
+  drawHealthBar(hero.x, hero.y - hero.radius - 12, hbW, hbH, hero.hp, hero.maxHp, isBlue ? '#46f' : '#f44');
+
+  // Level indicator
+  drawText(hero.x, hero.y + hero.radius + 16, `${hero.level}`, '#fff', 11);
+}
+
+function drawMinion(m) {
+  if (!m.alive) return;
+  const isBlue = m.team === 'blue';
+  const color = isBlue ? '#4477ff' : '#ff4444';
+  drawEntity(m, color, isBlue ? '#6699ff' : '#ff6666');
+  drawHealthBar(m.x, m.y - m.radius - 8, 25, 3, m.hp, m.maxHp);
+}
+
+function drawTower(t) {
+  if (!t.alive) return;
+  const isBlue = t.team === 'blue';
+  const sx = scaleX(t.x), sy = scaleY(t.y), sr = scaleR(t.radius);
+
+  // Base
+  ctx.fillStyle = isBlue ? 'rgba(50,100,255,0.3)' : 'rgba(255,50,50,0.3)';
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tower body
+  const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, sr);
+  grad.addColorStop(0, isBlue ? '#669' : '#966');
+  grad.addColorStop(0.6, isBlue ? '#448' : '#844');
+  grad.addColorStop(1, isBlue ? '#226' : '#622');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = isBlue ? '#68f' : '#f66';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Attack range indicator (faint)
+  ctx.beginPath();
+  ctx.arc(sx, sy, scaleR(t.attackRange), 0, Math.PI * 2);
+  ctx.fillStyle = isBlue ? 'rgba(50,100,255,0.06)' : 'rgba(255,50,50,0.06)';
+  ctx.fill();
+
+  drawHealthBar(t.x, t.y - t.radius - 10, 40, 4, t.hp, t.maxHp, isBlue ? '#46f' : '#f44');
+}
+
+function drawNexus(n) {
+  if (!n.alive) return;
+  const isBlue = n.team === 'blue';
+  const sx = scaleX(n.x), sy = scaleY(n.y), sr = scaleR(n.radius);
+  // Crystal glow
+  const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, sr);
+  grad.addColorStop(0, isBlue ? '#8af' : '#f88');
+  grad.addColorStop(0.5, isBlue ? '#46f' : '#f44');
+  grad.addColorStop(1, isBlue ? '#228' : '#822');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = isBlue ? '#adf' : '#faa';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Inner glow
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr * 0.5, 0, Math.PI * 2);
+  ctx.fillStyle = isBlue ? 'rgba(200,230,255,0.3)' : 'rgba(255,200,200,0.3)';
+  ctx.fill();
+
+  // Draw crystal shape
+  ctx.beginPath();
+  ctx.moveTo(sx, sy - sr * 0.6);
+  ctx.lineTo(sx + sr * 0.3, sy);
+  ctx.lineTo(sx, sy + sr * 0.6);
+  ctx.lineTo(sx - sr * 0.3, sy);
+  ctx.closePath();
+  ctx.fillStyle = isBlue ? 'rgba(150,200,255,0.5)' : 'rgba(255,150,150,0.5)';
+  ctx.fill();
+
+  drawHealthBar(n.x, n.y - n.radius - 12, 60, 5, n.hp, n.maxHp, isBlue ? '#46f' : '#f44');
+  drawText(n.x, n.y + n.radius + 5, n.name, isBlue ? '#8af' : '#f88', 11);
+}
+
+function drawProjectile(p) {
+  if (!p.alive) return;
+  drawCircle(p.x, p.y, p.radius, p.color, 'rgba(255,255,255,0.5)');
+  // Trail
+  ctx.beginPath();
+  ctx.moveTo(scaleX(p.x), scaleY(p.y));
+  ctx.lineTo(scaleX(p.x - p.vx * 2), scaleY(p.y - p.vy * 2));
+  ctx.strokeStyle = p.color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawDamageNumbers() {
+  ctx.textAlign = 'center';
+  for (const d of dmgNumbers) {
+    const alpha = d.life / 60;
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 18px Arial';
+    ctx.fillStyle = d.color;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 3;
+    const sx = scaleX(d.x), sy = scaleY(d.y);
+    ctx.strokeText(d.text, sx, sy);
+    ctx.fillText(d.text, sx, sy);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawMinimap() {
+  const mw = 180, mh = 120;
+  miniCtx.fillStyle = '#0a1a0a';
+  miniCtx.fillRect(0, 0, mw, mh);
+
+  // Lane
+  miniCtx.fillStyle = '#2a2a1a';
+  miniCtx.fillRect(0, mh/2 - 4, mw, 8);
+
+  // River
+  miniCtx.fillStyle = '#1a2a3a';
+  miniCtx.fillRect(mw * 0.49, 0, mw * 0.02, mh);
+
+  // Entities
+  for (const t of towers) {
+    if (!t.alive) continue;
+    miniCtx.fillStyle = t.team === 'blue' ? '#46f' : '#f44';
+    miniCtx.fillRect(t.x/W*mw - 2, t.y/H*mh - 2, 4, 4);
+  }
+  for (const n of nexuses) {
+    if (!n.alive) continue;
+    miniCtx.fillStyle = n.team === 'blue' ? '#6af' : '#f66';
+    miniCtx.beginPath();
+    miniCtx.arc(n.x/W*mw, n.y/H*mh, 5, 0, Math.PI*2);
+    miniCtx.fill();
+  }
+  for (const m of minions) {
+    if (!m.alive) continue;
+    miniCtx.fillStyle = m.team === 'blue' ? '#68f' : '#f66';
+    miniCtx.fillRect(m.x/W*mw - 1, m.y/H*mh - 1, 2, 2);
+  }
+  if (player.alive) {
+    miniCtx.fillStyle = '#0ff';
+    miniCtx.beginPath();
+    miniCtx.arc(player.x/W*mw, player.y/H*mh, 3, 0, Math.PI*2);
+    miniCtx.fill();
+  }
+  if (enemy.alive) {
+    miniCtx.fillStyle = '#ff0';
+    miniCtx.beginPath();
+    miniCtx.arc(enemy.x/W*mw, enemy.y/H*mh, 3, 0, Math.PI*2);
+    miniCtx.fill();
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawMap();
+
+  // Draw towers and nexus (behind entities)
+  for (const t of towers) drawTower(t);
+  for (const n of nexuses) drawNexus(n);
+
+  // Minions
+  for (const m of minions) drawMinion(m);
+
+  // Heroes
+  drawHero(player);
+  drawHero(enemy);
+
+  // Projectiles
+  for (const p of projectiles) drawProjectile(p);
+
+  // Damage numbers
+  drawDamageNumbers();
+
+  // Respawn timers
+  if (!player.alive) {
+    const sec = Math.ceil(player.respawnTimer / 60);
+    drawText(player.x, player.y, `等待复活 ${sec}s`, '#f44', 16);
+  }
+  if (!enemy.alive) {
+    const sec = Math.ceil(enemy.respawnTimer / 60);
+    drawText(enemy.x, enemy.y, `复活中 ${sec}s`, '#fa4', 14);
+  }
+
+  // HUD update
+  updateHUD();
+
+  // Minimap
+  drawMinimap();
+}
+
+function updateHUD() {
+  const hpPct = (player.hp / player.maxHp * 100).toFixed(0);
+  const mpPct = (player.mana / player.maxMana * 100).toFixed(0);
+  document.getElementById('health-bar').style.width = hpPct + '%';
+  document.getElementById('mana-bar').style.width = mpPct + '%';
+  document.getElementById('health-text').textContent = `${Math.ceil(player.hp)} / ${player.maxHp}`;
+  document.getElementById('level-display').textContent = `等级 ${player.level}`;
+  document.getElementById('blue-kills').textContent = player.kills;
+  document.getElementById('red-kills').textContent = enemy.kills;
+  document.getElementById('blue-towers').textContent = towers.filter(t => t.team === 'blue' && t.alive).length;
+  document.getElementById('red-towers').textContent = towers.filter(t => t.team === 'red' && t.alive).length;
+
+  // Ability cooldowns
+  updateAbilityUI('abQ', player.qCooldown, Q_COOLDOWN, Q_MANA);
+  updateAbilityUI('abW', player.wCooldown, W_COOLDOWN, W_MANA);
+  updateAbilityUI('abE', player.eCooldown, E_COOLDOWN, E_MANA);
+}
+
+function updateAbilityUI(elId, cd, maxCd, manaCost) {
+  const el = document.getElementById(elId);
+  let overlay = el.querySelector('.cd-overlay');
+  if (cd > 0) {
+    if (!overlay) { overlay = document.createElement('div'); overlay.className = 'cd-overlay'; el.appendChild(overlay); }
+    overlay.textContent = (cd / 60).toFixed(1) + 's';
+    el.classList.add('on-cd');
+  } else {
+    if (overlay) overlay.remove();
+    el.classList.remove('on-cd');
+    if (player.mana < manaCost) {
+      el.classList.add('no-mana');
+    } else {
+      el.classList.remove('no-mana');
+    }
+  }
+}
+
+// ===== GAME LOOP =====
+let lastTime = 0;
+function gameLoop(time) {
+  const dt = time - lastTime;
+  lastTime = time;
+  // Update roughly at 60fps
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// ===== INPUT =====
+document.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === 'q' || e.key === 'Q') { heroCastQ(player); e.preventDefault(); }
+  if (e.key === 'w' || e.key === 'W') { heroCastW(player); e.preventDefault(); }
+  if (e.key === 'e' || e.key === 'E') { heroCastE(player); e.preventDefault(); }
+});
+document.addEventListener('keyup', e => {
+  keys[e.key.toLowerCase()] = false;
+});
+// Prevent tab from leaving
+document.addEventListener('keydown', e => { if (e.key === 'Tab') e.preventDefault(); });
+
+// Ability click
+document.getElementById('abQ').addEventListener('click', () => heroCastQ(player));
+document.getElementById('abW').addEventListener('click', () => heroCastW(player));
+document.getElementById('abE').addEventListener('click', () => heroCastE(player));
+
+// ===== INIT =====
+initBuildings();
+spawnWave('blue');
+spawnWave('red');
+requestAnimationFrame(gameLoop);
+
+console.log('🎮 简易MOBA已启动!');
+console.log('WASD移动 | Q火球 | W治疗 | E闪电链');
+</script>
+</body>
+</html>
